@@ -1,0 +1,59 @@
+INCLDIR = -I /home/mingo/Work/ffmpeg4.0/ffmpeg -I /home/mingo/Work/ffmpeg4.0/ffmpeg/fftools -I /usr/local/include/SDL2
+CC = gcc
+LIBS = -lavdevice -lavfilter -lavformat -lavcodec -lpostproc -lswresample -lswscale -lavutil \
+	   -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread \
+	   -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
+	   -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm \
+	   -lva-x11 -lvdpau -lm -pthread
+EXTLIBS =
+SRCS = GetVideoFrames.c
+#SRCS = demuxing_decoding.c
+OBJS = $(SRCS:.c=.o)
+DBG = -g
+
+CFLAGS = -Wall
+
+#LIBDIRS = -L/usr/local/lib
+LDFLAGS = -Wl,--as-needed -Wl,-z,noexecstack -Wl,--warn-common \
+		  -Wl,-rpath-link=libpostproc:libswresample:libswscale:libavfilter:libavdevice:libavformat:libavcodec:libavutil:libavresample \
+	      -Wl,-rpath,/usr/local/lib -Wl,--enable-new-dtags -Wl,--no-undefined
+
+all: SimplePlayer.o Queue.o Clock.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS)  -o SimplePlayer
+
+GetVideo: $(OBJS)
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS)  -o $@
+
+GetAudio: GetAudioFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS)  -o $@
+
+PlayVideoFrame: PlayVideoFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+PlayAudioFrame: PlayAudioFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+SyncVideo: SyncVideo.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+AVTimestamps: AVTimestamps.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+SyncAudio: SyncAudio.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) $(CFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+MultiThread: MultiThread.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) $(CFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+SimplePlayer_DIT: SimplePlayer_display_in_thread.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) $(CFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+SimplePlayer_DIM: SimplePlayer_display_in_main.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) $(CFLAGS) -l:$^ $(LIBS) $(EXTLIBS) -o $@
+
+#$(OBJS): $(SRCS)
+#	$(CC) -o $(OBJS) $(SRCS) $(INCLDIR)
+
+.PHONY: clean
+clean:
+	rm -f *.o GetYUV* PlayVideoFrame GetAudio PlayAudioFrame SyncVideo SyncAudio MultiThread SimplePlayer *_Static SimplePlayer_DI*

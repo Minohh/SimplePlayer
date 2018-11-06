@@ -1,0 +1,54 @@
+INCLDIR = -I /home/mingo/Work/ffmpeg4.0/ffmpeg -I /home/mingo/Work/ffmpeg4.0/ffmpeg/fftools -I /usr/local/include/SDL2
+CC = gcc
+LIBSTATIC = -l:libavdevice.a -l:libavfilter.a -l:libavformat.a -l:libavcodec.a -l:libpostproc.a -l:libswresample.a -l:libswscale.a -l:libavutil.a 
+LIBS = -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread \
+	   -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
+	   -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm \
+	   -lva-x11 -lvdpau -lm -pthread
+SRCS = GetVideoFrames.c
+#SRCS = demuxing_decoding.c
+OBJS = $(SRCS:.c=.o)
+DBG = -g
+
+LIBDIRS = -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavcodec -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavdevice \
+	  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavfilter -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavformat \
+	   -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavresample -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavutil \
+	   -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libpostproc -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libswscale \
+	   -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libswresample -L/usr/local/lib
+LDFLAGS = -Wl,--as-needed -Wl,-z,noexecstack -Wl,--warn-common \
+		  -Wl,-rpath-link=libpostproc:libswresample:libswscale:libavfilter:libavdevice:libavformat:libavcodec:libavutil:libavresample \
+	      -Wl,-rpath,/usr/local/lib -Wl,--enable-new-dtags -Wl,--no-undefined
+
+all: SimplePlayer.o Queue.o Clock.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o SimplePlayer_Static
+
+GetVideo_Static: GetVideoFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+GetAudio_Static: GetAudioFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+PlayAudio_Static: PlayAudioFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+PlayVideo_Static: PlayVideoFrames.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+SyncAudio_Static: SyncAudio.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+SimplePlayer_DIT_Static: SimplePlayer_display_in_thread.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+SimplePlayer_DIM_Static: SimplePlayer_display_in_main.o Queue.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+AVTimestamps_Static: AVTimestamps.o
+	$(CC) $(DBG) $(LIBDIRS) $(LDFLAGS) -l:$^ $(LIBSTATIC) $(LIBS)  -o $@
+
+#$(OBJS): $(SRCS)
+#	$(CC) -o $(OBJS) $(SRCS) $(INCLDIR)
+
+.PHONY: clean
+clean:
+	rm *.o GetYUV*
