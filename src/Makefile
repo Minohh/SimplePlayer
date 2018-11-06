@@ -25,7 +25,6 @@ PROGRAMS=		GetVideoFrames					\
 				MultiThread_display_in_thread	\
 				SimplePlayer					\
 				AVTimestamps					\
-				decode_audio					\
 				GetInfo							\
 				SimplePlayer_filter				\
 
@@ -50,4 +49,4 @@ AVTimestamps: 					$(CUSTOM_OBJS)
 all:	$(OBJS) $(PROGRAMS)
 
 clean:
-	$(RM) $(PROGRAMS) $(OBJS)
+	$(RM) $(PROGRAMS) $(OBJS) $(CUSTOM_OBJS)

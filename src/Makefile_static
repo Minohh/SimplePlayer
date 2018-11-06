@@ -38,8 +38,8 @@ PROGRAMS=		GetVideoFrames					\
 				MultiThread_display_in_thread	\
 				SimplePlayer					\
 				AVTimestamps					\
-				decode_audio					\
 				GetInfo							\
+				SimplePlayer_filter				\
 
 OBJS=$(addsuffix .o,$(PROGRAMS))
 # implicit add LDLIBS and the objs with the same prefix name as the target
@@ -49,6 +49,7 @@ OBJS=$(addsuffix .o,$(PROGRAMS))
 CUSTOM_OBJS =	Clock.o							\
 				Queue.o							\
 
+SimplePlayer_filter: 			$(CUSTOM_OBJS)
 SimplePlayer: 					$(CUSTOM_OBJS)
 SyncAudio: 						$(CUSTOM_OBJS)
 MultiThread: 					$(CUSTOM_OBJS)
@@ -61,4 +62,4 @@ AVTimestamps: 					$(CUSTOM_OBJS)
 all:	$(OBJS) $(PROGRAMS)
 
 clean:
-	$(RM) $(PROGRAMS) $(OBJS)
+	$(RM) $(PROGRAMS) $(OBJS) $(CUSTOM_OBJS)
