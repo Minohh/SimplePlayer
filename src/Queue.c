@@ -43,10 +43,6 @@ int packet_queue_put(PacketQueue *q, AVPacket *pkt){
     if(q->abort_request)
         return -1;
 
-    if(av_dup_packet(pkt)<0){
-        return -1;
-    }
-
     pkt_node = av_malloc(sizeof(AVPacketList));
     if(!pkt_node){
         return -1;
