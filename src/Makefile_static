@@ -1,26 +1,27 @@
 # use pkg-config for getting CFLAGS and LDLIBS
 FFMPEG_LIBS=	libavdevice						\
+				libavfilter						\
 				libavformat						\
 				libavcodec						\
-				libavfilter						\
+				libpostproc						\
 				libswresample					\
 				libswscale						\
 				libavutil						\
 
 SDL_LIBS=		sdl2							\
 
-CFLAGS += -Wall -g
+CFLAGS += -Wall -g -o0
+
+#specify static libraries
+#EXP. -Wl,-rpath,/home/mingo/work/ffmpeg4.0/ffmpeg/libavformat -L/home/mingo/work/ffmpeg4.0/ffmpeg/libavformat -l:libavformat.a
+FFMPEG_DIR = /home/mingo/Work/ffmpeg4.0/ffmpeg/
+STATIC_LIB_DIRS = $(addprefix $(FFMPEG_DIR),$(FFMPEG_LIBS))
+STATIC_LIBS  := $(foreach DIR,$(STATIC_LIB_DIRS), -Wl,-rpath,$(DIR) -L$(DIR) -l:$(notdir $(DIR).a))
+LDLIBS += $(STATIC_LIBS)
+
 #use pkg-config to get info of the libs
-CFLAGS := $(shell pkg-config --cflags $(FFMPEG_LIBS) $(SDL_LIBS)) $(CFLAGS)
-LDLIBS := $(shell pkg-config --libs $(SDL_LIBS)) $(CFLAGS)
-LDLIBS += -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavdevice -l:libavdevice.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavfilter -l:libavfilter.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavformat -l:libavformat.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavcodec -l:libavcodec.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libpostproc -l:libpostproc.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libswresample -l:libswresample.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libswscale -l:libswscale.a \
-		  -L/home/mingo/Work/ffmpeg4.0/ffmpeg/libavutil -l:libavutil.a \
+CFLAGS += $(shell pkg-config --cflags $(FFMPEG_LIBS) $(SDL_LIBS))
+LDLIBS += $(shell pkg-config --libs $(SDL_LIBS))
 
 LDLIBS += -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread \
 	   -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
