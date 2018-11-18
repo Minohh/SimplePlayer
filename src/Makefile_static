@@ -1,14 +1,14 @@
 # use pkg-config for getting CFLAGS and LDLIBS
-FFMPEG_LIBS=	libavdevice						\
-				libavfilter						\
-				libavformat						\
-				libavcodec						\
-				libpostproc						\
-				libswresample					\
-				libswscale						\
-				libavutil						\
+FFMPEG_LIBS=    libavdevice                       \
+                libavfilter                       \
+                libavformat                       \
+                libavcodec                        \
+                libpostproc                       \
+                libswresample                     \
+                libswscale                        \
+                libavutil                         \
 
-SDL_LIBS=		sdl2							\
+SDL_LIBS=       sdl2                              \
 
 CFLAGS += -Wall -g -o0
 
@@ -23,44 +23,44 @@ LDLIBS += $(STATIC_LIBS)
 CFLAGS += $(shell pkg-config --cflags $(FFMPEG_LIBS) $(SDL_LIBS))
 LDLIBS += $(shell pkg-config --libs $(SDL_LIBS))
 
-LDLIBS += -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread \
-	   -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
-	   -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm \
-	   -lva-x11 -lvdpau -lm -pthread \
+LDLIBS += -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread        \
+       -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
+       -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm   \
+       -lva-x11 -lvdpau -lm -pthread                                                                         \
 
-PROGRAMS=		GetVideoFrames					\
-				GetAudioFrames					\
-				PlayVideoFrames					\
-				PlayAudioFrames					\
-				SyncVideo						\
-				SyncAudio						\
-				MultiThread						\
-				MultiThread_display_in_main	\
-				MultiThread_display_in_thread	\
-				SimplePlayer					\
-				AVTimestamps					\
-				GetInfo							\
-				SimplePlayer_filter				\
+PROGRAMS=       GetVideoFrames                    \
+                GetAudioFrames                    \
+                PlayVideoFrames                   \
+                PlayAudioFrames                   \
+                SyncVideo                         \
+                SyncAudio                         \
+                MultiThread                       \
+                MultiThread_display_in_main       \
+                MultiThread_display_in_thread     \
+                SimplePlayer                      \
+                AVTimestamps                      \
+                GetInfo                           \
+                SimplePlayer_filter               \
 
-OBJS=$(addsuffix .o,$(PROGRAMS))
+OBJS = $(addsuffix .o,$(PROGRAMS))
 # implicit add LDLIBS and the objs with the same prefix name as the target
 # implicit compile target with CFLAGS
 
 # explicit add custom objects
-CUSTOM_OBJS =	Clock.o							\
-				Queue.o							\
+CUSTOM_OBJS =   Clock.o                            \
+                Queue.o                            \
 
-SimplePlayer_filter: 			$(CUSTOM_OBJS)
-SimplePlayer: 					$(CUSTOM_OBJS)
-SyncAudio: 						$(CUSTOM_OBJS)
-MultiThread: 					$(CUSTOM_OBJS)
-MultiThread_display_in_main: 	$(CUSTOM_OBJS)
-MultiThread_display_in_thread:	$(CUSTOM_OBJS)
-AVTimestamps: 					$(CUSTOM_OBJS)
+SimplePlayer_filter:             $(CUSTOM_OBJS)
+SimplePlayer:                    $(CUSTOM_OBJS)
+SyncAudio:                       $(CUSTOM_OBJS)
+MultiThread:                     $(CUSTOM_OBJS)
+MultiThread_display_in_main:     $(CUSTOM_OBJS)
+MultiThread_display_in_thread:   $(CUSTOM_OBJS)
+AVTimestamps:                    $(CUSTOM_OBJS)
 
 .phony: all clean
 
-all:	$(OBJS) $(PROGRAMS)
+all:    $(OBJS) $(PROGRAMS)
 
 clean:
 	$(RM) $(PROGRAMS) $(OBJS) $(CUSTOM_OBJS)
