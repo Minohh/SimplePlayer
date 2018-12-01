@@ -41,6 +41,8 @@ PROGRAMS=       GetVideoFrames                    \
                 AVTimestamps                      \
                 GetInfo                           \
                 SimplePlayer_filter               \
+                SimplePlayer_multithread          \
+                Filter_test                       \
 
 OBJS = $(addsuffix .o,$(PROGRAMS))
 # implicit add LDLIBS and the objs with the same prefix name as the target
@@ -50,17 +52,21 @@ OBJS = $(addsuffix .o,$(PROGRAMS))
 CUSTOM_OBJS =   Clock.o                            \
                 Queue.o                            \
 
+FILTER_OBJ = Myfilter.o
+
 SimplePlayer_filter:             $(CUSTOM_OBJS)
+SimplePlayer_multithread:        $(CUSTOM_OBJS)
 SimplePlayer:                    $(CUSTOM_OBJS)
 SyncAudio:                       $(CUSTOM_OBJS)
 MultiThread:                     $(CUSTOM_OBJS)
 MultiThread_display_in_main:     $(CUSTOM_OBJS)
 MultiThread_display_in_thread:   $(CUSTOM_OBJS)
 AVTimestamps:                    $(CUSTOM_OBJS)
+Filter_test:                     $(CUSTOM_OBJS) $(FILTER_OBJ)
 
 .phony: all clean
 
 all:    $(OBJS) $(PROGRAMS)
 
 clean:
-	$(RM) $(PROGRAMS) $(OBJS) $(CUSTOM_OBJS)
+	$(RM) $(PROGRAMS) $(OBJS) $(CUSTOM_OBJS) $(FILTER_OBJ)
