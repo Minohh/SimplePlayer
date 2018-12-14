@@ -70,6 +70,7 @@ void SimpleCallback(void* userdata, Uint8 *stream, int queryLen){
         if(!read_size){
             //fprintf(stdout, "no data to play\n");
             memset(stream+queryLen-len, 0, len);
+            break;
         }else if(read_size<0){
             memset(stream, 0, queryLen);
             break;
