@@ -479,7 +479,7 @@ int ReadThread(void *arg){
             packet.data=NULL;
             packet.size=0;
             packet_queue_put(&APQ, &packet);
-            packet_queue_put(&APQ, &packet);
+            packet_queue_put(&VPQ, &packet);
             break;
         }
     }
