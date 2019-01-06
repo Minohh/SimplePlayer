@@ -1,6 +1,13 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/time.h>
+#include <libavutil/opt.h>
+#include <libavutil/error.h>
+
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
+
 #include <SDL2/SDL.h>
 
 #include "Queue.h"
@@ -25,6 +32,7 @@ typedef struct SDL_Output{
 }SDL_Output;
 
 typedef struct VideoState{
+    /* video display parameter */
     int64_t frame_cur_pts;
     int64_t frame_last_pts;
     int64_t last_display_time;
@@ -37,24 +45,32 @@ typedef struct VideoState{
     int64_t audio_bytes_consumed;
     SyncClock sc;
     AVFrame *cur_frame;
+
+    /* audio/video stream info  */
+    int has_video;
+    int has_audio;
+    AVFormatContext *FCtx;
+    int AStream;
+    int VStream;
 }VideoState;
 
 typedef struct Codec{
     AVFormatContext *FCtx;
     AVCodecContext *CCtx;
     AVCodec *Codec;
+    AVFilterGraph *filter_graph;
+    AVFilterContext *in_filter;
+    AVFilterContext *out_filter;
     int stream;
 }Codec;
-
-typedef struct ReadThreadParam{
-    AVFormatContext *FCtx;
-    int AStream;
-    int VStream;
-}ReadThreadParam;
 
 FrameQueue AFQ, VFQ;
 RingBuffer ring_buffer;
 PacketQueue APQ, VPQ;
+SDL_Thread *read_tid;
+SDL_Thread *audio_tid;
+SDL_Thread *video_tid;
+
 int read_finished;
 
 double audio_frame_pts;
@@ -92,18 +108,101 @@ void SimpleCallback(void* userdata, Uint8 *stream, int queryLen){
     //ii++;
 }
 
-int VideoStateInit(VideoState *vs, AVRational tb, int freq, int channels){
+int AudioFilterInit(Codec *c){
+    int ret;
 
-    memset(vs, 0, sizeof(VideoState));
+    // input format, sample rate, layout, buffersrc must set this options while initializing
+    char args[256] = {0};
+    const char    *in_sample_fmt_name  = av_get_sample_fmt_name(c->CCtx->sample_fmt);
+    int           in_sample_rate       = c->CCtx->sample_rate;
+    int           in_channels          = c->CCtx->channels;
+    int64_t       in_channel_layout    = c->CCtx->channel_layout;
+
+    snprintf(args, sizeof(args), "sample_rate=%d:sample_fmt=%s:channels=%d:time_base=%d/%d:channel_layout=0x%lld",
+            in_sample_rate, in_sample_fmt_name, in_channels, 1, in_sample_rate, in_channel_layout);
+
+    
+    AVFilterContext *in_audio_filter = NULL, *out_audio_filter = NULL;
+    AVFilterGraph *filter_graph = NULL;
+
+    const AVFilter *abuffersrc  = avfilter_get_by_name("abuffer");
+    const AVFilter *abuffersink = avfilter_get_by_name("abuffersink");
+    
+    filter_graph = avfilter_graph_alloc();
+    
+    avfilter_graph_create_filter(&in_audio_filter, abuffersrc, "in", args, NULL, filter_graph);
+    avfilter_graph_create_filter(&out_audio_filter, abuffersink, "out", NULL, NULL, filter_graph);
+   
+    av_opt_show2(in_audio_filter->priv, NULL, 8|(1<<16), 0);
+    av_opt_show2(out_audio_filter->priv, NULL, 8|(1<<16), 0);
+
+    // output format
+    static const enum AVSampleFormat out_sample_fmts[2]     = { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE };
+    ret = av_opt_set_int_list(out_audio_filter, "sample_fmts",     out_sample_fmts,     AV_SAMPLE_FMT_NONE, AV_OPT_SEARCH_CHILDREN);
+    if(ret !=0)
+        fprintf(stderr, "set sample_fmts error %s\n", av_err2str(ret));
+
+    avfilter_link(in_audio_filter, 0, out_audio_filter, 0);
+    
+    avfilter_graph_config(filter_graph, NULL);
+
+    c->filter_graph = filter_graph;
+    c->in_filter    = in_audio_filter;
+    c->out_filter   = out_audio_filter;
+    return 0;
+}
+
+int VideoFilterInit(Codec *c){
+    // input format, sample rate, layout, buffersrc must set this options while initializing
+    char args[256] = {0};
+    int        width     = c->CCtx->width;
+    int        height    = c->CCtx->height;
+    int        pix_fmt   = c->CCtx->pix_fmt;
+    AVRational time_base = c->FCtx->streams[c->stream]->time_base;
+    AVRational ratio     = c->CCtx->sample_aspect_ratio;
+
+    snprintf(args, sizeof(args), "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+            width, height, pix_fmt, time_base.num, time_base.den, ratio.num, ratio.den);
+
+    
+    AVFilterContext *in_video_filter = NULL;
+    AVFilterContext *out_video_filter = NULL;
+    AVFilterGraph *filter_graph = NULL;
+
+    const AVFilter *buffersrc  = avfilter_get_by_name("buffer");
+    const AVFilter *buffersink = avfilter_get_by_name("buffersink");
+
+    filter_graph = avfilter_graph_alloc();
+    
+    avfilter_graph_create_filter(&in_video_filter, buffersrc, "in", args, NULL, filter_graph);
+    avfilter_graph_create_filter(&out_video_filter, buffersink, "out", NULL, NULL, filter_graph);
+    
+    avfilter_link(in_video_filter, 0, out_video_filter, 0);
+
+    avfilter_graph_config(filter_graph, NULL);
+
+    c->filter_graph = filter_graph;
+    c->in_filter    = in_video_filter;
+    c->out_filter   = out_video_filter;
+    return 0;
+}
+
+int VideoStateInit(VideoState *pVS){
+
+    memset(pVS, 0, sizeof(VideoState));
+    
+    pVS->last_frame_displayed = 0;
+    pVS->is_first_frame = 1;
+    pVS->cur_frame = av_frame_alloc();
+
+    return 0;
+}
+
+int VideoStateSetForComputingPTS(VideoState *vs, int freq, int channels){
 
     /* 
-     * [Important] for computing audio/video pts 
+     * [Important] for computing audio pts 
      *             accuracy is very important, will cause av lag if accuracy not enougth
-     * [Video]     
-     *             AVRational time_base is a fraction consist of num and den
-     *             We can get decimal of this fraction with av_q2d that is equivalent to num/den. 
-     *             For accuracy, vs.time_base must be double type.
-     *             And firstly, multi 1000000 to convert to usecond.
      * [Audio]
      *             Similarly vs.usecond_per_byte must be double type.
      *             1000000 * (audio_stream_len/audio_bytes_per_second) = usecond of stream
@@ -111,28 +210,59 @@ int VideoStateInit(VideoState *vs, AVRational tb, int freq, int channels){
      *             usecond of stream = usecond_per_byte * audio_stream_len
      *             2 for wanted.format = AUDIO_S16SYS;
      */
-    vs->time_base = tb.num*1000000.0f/(double)tb.den;
-    fprintf(stdout, "timebase = %lf, %lf\n", vs->time_base, av_q2d(tb));
     vs->usecond_per_byte = 1000000.0f/(freq*2*channels); 
     fprintf(stdout, "usecond per byte is %lf\n", vs->usecond_per_byte);
-
-    vs->last_frame_displayed = 0;
-    vs->is_first_frame = 1;
-    vs->cur_frame = av_frame_alloc();
 
     return 0;
 }
 
-int InitSDLAVOutput(SDL_Output *pOutput, VideoState *vs, int width, int height, int freq, int channels){
+int InitSDLAudioOutput(SDL_Output *pOutput, VideoState *vs, int freq, int channels){
+    SDL_AudioSpec wanted, obtained;
+    int ret = 0;
+
+    if(SDL_WasInit(0)) {
+        ret = SDL_InitSubSystem(SDL_INIT_AUDIO);
+    }else {
+        ret = SDL_Init(SDL_INIT_AUDIO);
+    }
+    if(ret) {
+        fprintf(stderr, "SDL init audio failed\n");
+        return -1;
+    }
+    
+    /*init SDL Audio Output*/
+    memset(&wanted, 0, sizeof(wanted));
+    wanted.freq = freq;
+    wanted.format = AUDIO_S16SYS;
+    wanted.channels = channels;
+    wanted.samples = DEF_SAMPLES;
+    wanted.silence = 0;
+    wanted.callback = SimpleCallback;
+    wanted.userdata = (void *)(vs);
+
+    pOutput->audio_dev = SDL_OpenAudioDevice(NULL, 0, &wanted, &obtained, 0);
+    if(!pOutput->audio_dev){
+        fprintf(stderr, "SDL Open Audio failed, reason:%s\n", SDL_GetError());
+        return -1;
+    }
+
+    return 0;
+}
+int InitSDLVideoOutput(SDL_Output *pOutput, VideoState *vs, int width, int height){
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
-    SDL_AudioSpec wanted, obtained;
     unsigned char *YPlane;
     unsigned char *UPlane;
     unsigned char *VPlane;
+    int ret = 0;
 
-    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO)){
+    if(SDL_WasInit(0)) {
+        ret = SDL_InitSubSystem(SDL_INIT_VIDEO);
+    }else {
+        ret = SDL_Init(SDL_INIT_VIDEO);
+    }
+    if(ret) {
         fprintf(stderr, "SDL init video failed\n");
         return -1;
     }
@@ -174,26 +304,10 @@ int InitSDLAVOutput(SDL_Output *pOutput, VideoState *vs, int width, int height, 
     pOutput->window_height = height;
     pOutput->buf_size = width*height;
 
-    /*init SDL Audio Output*/
-    memset(&wanted, 0, sizeof(wanted));
-    wanted.freq = freq;
-    wanted.format = AUDIO_S16SYS;
-    wanted.channels = channels;
-    wanted.samples = DEF_SAMPLES;
-    wanted.silence = 0;
-    wanted.callback = SimpleCallback;
-    wanted.userdata = (void *)(vs);
-
-    pOutput->audio_dev = SDL_OpenAudioDevice(NULL, 0, &wanted, &obtained, 0);
-    if(!pOutput->audio_dev){
-        fprintf(stderr, "SDL Open Audio failed, reason:%s\n", SDL_GetError());
-        return -1;
-    }
-
     return 0;
 }
 
-void UninitSDLAVOutput(SDL_Output *pOutput){
+void UninitSDLVideoOutput(SDL_Output *pOutput){
     if(!pOutput)
         return;
     if(pOutput->texture)
@@ -208,6 +322,11 @@ void UninitSDLAVOutput(SDL_Output *pOutput){
         free(pOutput->UPlane);
     if(pOutput->VPlane)
         free(pOutput->VPlane);
+}
+
+void UninitSDLAudioOutput(SDL_Output *pOutput){
+    if(!pOutput)
+        return;
     if(pOutput->audio_dev)
         SDL_CloseAudioDevice(pOutput->audio_dev);
 }
@@ -250,11 +369,19 @@ int VideoThread(void *arg){
             ret = avcodec_receive_frame(pCodecCtx, pFrame);
             if(ret>=0){
 
-                fn.frame = pFrame;
+                ret = av_buffersrc_add_frame(c->in_filter, pFrame);
+                if(ret < 0){
+                    fprintf(stderr, "filter error\n");
+                }
+                while((ret = av_buffersink_get_frame_flags(c->out_filter, pFrame, 0))>=0){
+
+                    fn.frame = pFrame;
         
-                ret = queue_frame(&VFQ, &fn);
-                if(ret<0)
-                    break;
+                    //fprintf(stdout, "filtered frame pts = %d\n", pFrame->pts);
+                    ret = queue_frame(&VFQ, &fn);
+                    if(ret<0)
+                        break;
+                }
             }
         }
         av_packet_unref(&packet);
@@ -262,6 +389,7 @@ int VideoThread(void *arg){
 
     av_frame_free(&pFrame);
     avcodec_close(pCodecCtx);
+    avfilter_graph_free(&(c->filter_graph));
     
     fprintf(stdout, "VideoThread exit\n");
     return 0;
@@ -273,14 +401,8 @@ int AudioThread(void *arg){
     AVCodecContext *pCodecCtx = c->CCtx;
     AVPacket packet;
     AVFrame *pFrame = NULL;
-    int Stream = c->stream;
-    int i = 0, size=0;
-    void *buf=NULL, *ptr;
-    short *itr;
-    int frame_size, write_size, left_size;
-    unsigned int sample_count;
-    float *channel0, *channel1;
-    short sample0, sample1;
+    void *ptr;
+    int write_size, left_size;
     unsigned int audio_sleep;
     int ret;
 
@@ -304,61 +426,80 @@ int AudioThread(void *arg){
         while(ret>=0){
             //Decode audio frame
             ret = avcodec_receive_frame(pCodecCtx, pFrame);
-            if(ret>=0){
-                size = av_samples_get_buffer_size(NULL, pCodecCtx->channels, pFrame->nb_samples, pCodecCtx->sample_fmt, 1);
-                if(!buf){
-                    buf = malloc(size);
+            
+            if(ret >=0){
+                ret = av_buffersrc_add_frame(c->in_filter, pFrame);
+                if(ret < 0){
+                    fprintf(stderr, "filter error\n");
                 }
-                audio_frame_pts = pFrame->pts * av_q2d(c->FCtx->streams[Stream]->time_base);
-                //if(audio_frame_pts>32)
-                //    fprintf(stdout, "[%d] audio frame pts = %lf\n", jj, audio_frame_pts);
-                //jj++;
-                
-                ptr = buf;
-                itr = (short *)buf;
-                
-                sample_count = pFrame->nb_samples;
-                channel0 = (float *)pFrame->data[0];
-                channel1 = (float *)pFrame->data[1];
-                //normal PCM is mixed track, but fltp "p" means planar
-                if(pFrame->format == AV_SAMPLE_FMT_FLTP) 
-                {
-                    for(i=0; i<sample_count; i++){ //stereo 
-                        sample0 = (short)(channel0[i]*32767.0f);
-                        sample1 = (short)(channel1[i]*32767.0f);
-                        itr[2*i] = sample0;
-                        itr[2*i+1] = sample1;
-                    }
-                    frame_size = sample_count*4;
-                }else{
-                    memcpy(itr, pFrame->data[0], pFrame->linesize[0]);
-                    frame_size = pFrame->linesize[0];
-                }
+                while((ret = av_buffersink_get_frame_flags(c->out_filter, pFrame, 0))>=0){
+                    //origin pFrame->linesize[0] = 8192
+                    //filtered pFrame->linesize[0] = 4224
+                    //why ?
+                    ptr = pFrame->data[0];
+                    left_size = pFrame->nb_samples * pFrame->channels * 2;
 
-                left_size = frame_size;
-                while(left_size){
-                    write_size = RB_PushData(&ring_buffer, ptr, left_size);
-                    if(write_size == 0)
-                        SDL_Delay(audio_sleep);
-                    else if(write_size<0)
-                        break;
-                    //fprintf(stdout, "new write_size = %d, audio_sleep=%d, ptr=0x%x\n", write_size, audio_sleep, ptr);
-                    ptr += write_size;
-                    left_size -= write_size;
+                    while(left_size){
+                        write_size = RB_PushData(&ring_buffer, ptr, left_size);
+                        if(write_size == 0)
+                            SDL_Delay(audio_sleep);
+                        else if(write_size<0)
+                            break;
+                        ptr += write_size;
+                        left_size -= write_size;
+                    }
                 }
             }
         }
         av_packet_unref(&packet);
     }
 
-    //free buffers
-    if(buf)
-        free(buf);
-
     av_free(pFrame);
     avcodec_close(pCodecCtx);
+    avfilter_graph_free(&(c->filter_graph));
 
     fprintf(stdout, "AudioThread exit\n");
+    return 0;
+}
+
+int ReadThread(void *arg){
+    fprintf(stdout, "ReadThread start\n");
+    VideoState *pVS = arg;
+    AVFormatContext *pFormatCtx = pVS->FCtx;
+    int AudioStream = pVS->AStream;
+    int VideoStream = pVS->VStream;
+    int audio_available = pVS->has_audio;
+    int video_available = pVS->has_video;
+    int ret;
+
+    AVPacket packet;
+    while(1){
+        ret = av_read_frame(pFormatCtx, &packet);
+        if(ret>=0){
+            if(packet.stream_index==AudioStream){
+                if(audio_available)
+                    ret = packet_queue_put(&APQ, &packet);
+            }else if(packet.stream_index==VideoStream){
+                if(video_available)
+                    ret = packet_queue_put(&VPQ, &packet);
+            }
+            if(ret<0)
+                break;
+        }else{
+            //read finished
+            //av_usleep(1000000);
+            packet.data=NULL;
+            packet.size=0;
+            if(audio_available)
+                packet_queue_put(&APQ, &packet);
+            if(video_available)
+                packet_queue_put(&VPQ, &packet);
+            break;
+        }
+    }
+
+    read_finished = 1;
+    fprintf(stdout, "ReadThread exit\n");
     return 0;
 }
 
@@ -395,7 +536,12 @@ int CodecInit(int type, AVFormatContext *pFormatCtx, Codec *c){
     Stream = av_find_best_stream(pFormatCtx, type, -1, -1, NULL, 0);
     
     if(Stream<0){
-        fprintf(stderr, "no video stream\n");
+        if(audioVideo == 1)
+            fprintf(stderr, "no video stream\n");
+        else if(audioVideo == 0)
+            fprintf(stderr, "no video stream\n");
+        else
+            fprintf(stderr, "stream type error\n");
         return -1;
     }else{
         fprintf(stdout, "stream %d is %s\n", Stream, audioVideo?"video":"audio");
@@ -416,6 +562,9 @@ int CodecInit(int type, AVFormatContext *pFormatCtx, Codec *c){
         fprintf(stdout, "codec id is %d\n", pCodecCtx->codec_id);
     }
 
+    pCodecCtx->thread_count = 4;
+    pCodecCtx->thread_type = FF_THREAD_SLICE;
+
     if(avcodec_open2(pCodecCtx, pCodec, NULL)<0){
         fprintf(stderr, "open codec failed\n");
         return -1;
@@ -429,40 +578,88 @@ int CodecInit(int type, AVFormatContext *pFormatCtx, Codec *c){
     return 0;
 }
 
-int ReadThread(void *arg){
-    fprintf(stdout, "ReadThread start\n");
-    ReadThreadParam *param = arg;
-    AVFormatContext *pFormatCtx = param->FCtx;
-    int AudioStream = param->AStream;
-    int VideoStream = param->VStream;
-    int ret;
+int AudioInit(AVFormatContext *pFormatCtx, Codec *pACodec, SDL_Output *pOutput, VideoState *pVS) {
+    int ret = 0;
 
-    AVPacket packet;
-    while(1){
-        ret = av_read_frame(pFormatCtx, &packet);
-        if(ret>=0){
-            if(packet.stream_index==AudioStream){
-                ret = packet_queue_put(&APQ, &packet);
-            }else if(packet.stream_index==VideoStream){
-                ret = packet_queue_put(&VPQ, &packet);
-            }
-            if(ret<0)
-                break;
-        }else{
-            //read finished
-            //av_usleep(1000000);
-            packet.data=NULL;
-            packet.size=0;
-            packet_queue_put(&APQ, &packet);
-            packet_queue_put(&VPQ, &packet);
-            break;
-        }
+    if(CodecInit(AVMEDIA_TYPE_AUDIO, pFormatCtx, pACodec)!=0){
+        pVS->has_audio = 0;
+        return -1;
+    }else{
+        pVS->has_audio = 1;
     }
+    AudioFilterInit(pACodec);
+    
+    VideoStateSetForComputingPTS(pVS, pACodec->CCtx->sample_rate, pACodec->CCtx->channels);
+   
+    ret = InitSDLAudioOutput(pOutput, pVS, pACodec->CCtx->sample_rate, pACodec->CCtx->channels);
+    if(ret != 0){
+        fprintf(stderr, "init SDL output error:%s\n", SDL_GetError());
+        UninitSDLAudioOutput(pOutput);
+        return -1;
+    }
+   
+    packet_queue_init(&APQ, 500, "audio queue");
+    RB_Init(&ring_buffer, 240*DEF_SAMPLES);
 
-    read_finished = 1;
-    fprintf(stdout, "ReadThread exit\n");
+    audio_tid   = SDL_CreateThread(AudioThread, "AudioThread", pACodec);
+    
+    //start to play audio
+    SDL_PauseAudioDevice(pOutput->audio_dev, 0);
+
     return 0;
 }
+
+int VideoInit(AVFormatContext *pFormatCtx, Codec *pVCodec, SDL_Output *pOutput, VideoState *pVS) {
+    int ret = 0;
+    
+    VideoStateInit(pVS);
+
+    if(CodecInit(AVMEDIA_TYPE_VIDEO, pFormatCtx, pVCodec)!=0)
+        pVS->has_video = 0;
+    else
+        pVS->has_video = 1;
+ 
+    
+    if(pVS->has_video){
+        /* 
+         * [Important] for computing video pts 
+         *             accuracy is very important, will cause av lag if accuracy not enougth
+         * [Video]     
+         *             AVRational time_base is a fraction consist of num and den
+         *             We can get decimal of this fraction with av_q2d that is equivalent to num/den. 
+         *             For accuracy, vs.time_base must be double type.
+         *             And firstly, multi 1000000 to convert to usecond.
+         */
+        AVRational tb =  pVCodec->FCtx->streams[pVCodec->stream]->time_base;
+        pVS->time_base = tb.num*1000000.0f/(double)tb.den;
+        fprintf(stdout, "timebase = %lf, %lf\n", pVS->time_base, av_q2d(tb));
+    
+        VideoFilterInit(pVCodec);
+    
+        //Init SDL
+        ret = InitSDLVideoOutput(pOutput, pVS, pVCodec->CCtx->width, pVCodec->CCtx->height);
+        if(ret != 0){
+            fprintf(stderr, "init SDL video output error:%s\n", SDL_GetError());
+            UninitSDLVideoOutput(pOutput);
+            return -1;
+        }
+    
+        packet_queue_init(&VPQ, 300, "video queue");
+        frame_queue_init(&VFQ, "video frame queue");
+  
+        video_tid   = SDL_CreateThread(VideoThread, "VideoThread", pVCodec);
+    } else {
+        //Init SDL for audio
+        ret = InitSDLVideoOutput(pOutput, pVS, 600, 1);
+        if(ret != 0){
+            fprintf(stderr, "init SDL video output error:%s\n", SDL_GetError());
+            UninitSDLVideoOutput(pOutput);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 
 /*
  *  1. dequeue frame
@@ -490,8 +687,10 @@ int Display(SDL_Output *Output, VideoState *vs){
         vs->frame_last_pts = vs->frame_cur_pts;
         vs->frame_cur_pts = vs->cur_frame->pts * vs->time_base;
         pts_delay = vs->frame_cur_pts - vs->frame_last_pts;
-        set_acceptable_delay(&vs->sc, pts_delay);
-        pts_delay = adjust_delay(&vs->sc, pts_delay);
+        if(vs->has_audio) {
+            set_acceptable_delay(&vs->sc, pts_delay);
+            pts_delay = adjust_delay(&vs->sc, pts_delay);
+        }
         vs->cur_display_time = vs->last_display_time + pts_delay;
 
         vs->last_frame_displayed = 0;
@@ -526,14 +725,11 @@ int Display(SDL_Output *Output, VideoState *vs){
 }
 
 int main(int argc, char *argv[]){
-    ReadThreadParam param;
     Codec ACodec, VCodec;
     AVFormatContext *pFormatCtx = NULL;
     SDL_Output Output;
-    int ret;
     SDL_Event event;
     VideoState vs;
-    SDL_Thread *read_tid, *audio_tid, *video_tid;
 
     //Register all codecs and formats
     //av_register_all();
@@ -550,41 +746,23 @@ int main(int argc, char *argv[]){
     }
 
     av_dump_format(pFormatCtx, 0, argv[1], 0);
-
-    if(CodecInit(AVMEDIA_TYPE_VIDEO, pFormatCtx, &VCodec)!=0)
-        return -1;
-    if(CodecInit(AVMEDIA_TYPE_AUDIO, pFormatCtx, &ACodec)!=0)
-        return -1;
-
-    AVRational tb =  VCodec.FCtx->streams[VCodec.stream]->time_base;
-    VideoStateInit(&vs, tb, ACodec.CCtx->sample_rate, ACodec.CCtx->channels);
-
-    //Init SDL
-    ret = InitSDLAVOutput(&Output, &vs, VCodec.CCtx->width, VCodec.CCtx->height, ACodec.CCtx->sample_rate, ACodec.CCtx->channels);
-    if(ret != 0){
-        fprintf(stderr, "init SDL output error:%s\n", SDL_GetError());
-        UninitSDLAVOutput(&Output);
-        return -1;
-    }
-   
-    packet_queue_init(&APQ, 500, "audio queue");
-    packet_queue_init(&VPQ, 300, "video queue");
-    frame_queue_init(&VFQ, "video frame queue");
-    RB_Init(&ring_buffer, 240*DEF_SAMPLES);
-  
-    param.FCtx = ACodec.FCtx;
-    param.AStream = ACodec.stream;
-    param.VStream = VCodec.stream;
-
-    read_tid    = SDL_CreateThread(ReadThread, "ReadThread", &param);
-    video_tid   = SDL_CreateThread(VideoThread, "VideoThread", &VCodec);
-    audio_tid   = SDL_CreateThread(AudioThread, "AudioThread", &ACodec);
     
-    //start to play audio
-    SDL_PauseAudioDevice(Output.audio_dev, 0);
+    VideoInit(pFormatCtx, &VCodec, &Output, &vs);
+    AudioInit(pFormatCtx, &ACodec, &Output, &vs);
+    
+    if(!vs.has_video && !vs.has_audio)
+        return -1;
+
+    vs.FCtx = pFormatCtx;
+    vs.AStream = ACodec.stream;
+    vs.VStream = VCodec.stream;
+    read_tid    = SDL_CreateThread(ReadThread, "ReadThread", &vs);
     
     while(1){
-        Display(&Output, &vs);
+        if(vs.has_video)
+            Display(&Output, &vs);
+        else
+            vs.sleep_time = 40000;
         SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT);
         switch(event.type){
         case SDL_QUIT :
@@ -595,28 +773,40 @@ int main(int argc, char *argv[]){
              * 4. close audio device will wait callback thread return;
              * 5. uninit queue
              */
-            packet_queue_abort(&APQ);
-            packet_queue_abort(&VPQ);
-            frame_queue_abort(&VFQ);
-            RB_abort(&ring_buffer);
-            
+            if(vs.has_audio) {
+                packet_queue_abort(&APQ);
+                RB_abort(&ring_buffer);
+            }
+            if(vs.has_video) {
+                packet_queue_abort(&VPQ);
+                frame_queue_abort(&VFQ);
+            }
+
             //abort queue will cause threads break from loop
 
             SDL_WaitThread(read_tid, NULL);
-            SDL_WaitThread(video_tid, NULL);
-            SDL_WaitThread(audio_tid, NULL);
+            if(vs.has_video)
+                SDL_WaitThread(video_tid, NULL);
+            if(vs.has_audio)
+                SDL_WaitThread(audio_tid, NULL);
             
-            UninitSDLAVOutput(&Output);
+            UninitSDLVideoOutput(&Output);
+            if(vs.has_audio)
+                UninitSDLAudioOutput(&Output);
 
-            packet_queue_uninit(&APQ);
-            packet_queue_uninit(&VPQ);
-            frame_queue_uninit(&VFQ);
-            RB_Uninit(&ring_buffer);
-           
+            if(vs.has_audio) {
+                packet_queue_uninit(&APQ);
+                RB_Uninit(&ring_buffer);
+            }
+            if(vs.has_video) {
+                packet_queue_uninit(&VPQ);
+                frame_queue_uninit(&VFQ);
+            }
             //audio codec close in AudioThread
             //video codec close in VideoThread
             
-            av_free(vs.cur_frame);
+            if(vs.has_video)
+                av_free(vs.cur_frame);
 
             avformat_close_input(&pFormatCtx);
             SDL_Quit();
