@@ -41,9 +41,9 @@ CUSTOM_OBJS =   Clock.o                           \
 
 FILTER_OBJ = Myfilter.o
 
+SimplePlayer:                    $(CUSTOM_OBJS)
 SimplePlayer_filter:             $(CUSTOM_OBJS)
 SimplePlayer_multithread:        $(CUSTOM_OBJS)
-SimplePlayer:                    $(CUSTOM_OBJS)
 SyncAudio:                       $(CUSTOM_OBJS)
 MultiThread:                     $(CUSTOM_OBJS)
 MultiThread_display_in_main:     $(CUSTOM_OBJS)
