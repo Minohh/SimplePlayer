@@ -9,7 +9,7 @@ FFMPEG_LIBS=    libavdevice                       \
 
 SDL_LIBS=       sdl2                              \
 
-CFLAGS += -Wall -g
+CFLAGS += -Wall
 #use pkg-config to get info of the libs
 CFLAGS := $(shell pkg-config --cflags $(FFMPEG_LIBS) $(SDL_LIBS)) $(CFLAGS)
 LDLIBS := $(shell pkg-config --libs $(FFMPEG_LIBS) $(SDL_LIBS)) $(LDLIBS)
@@ -29,8 +29,9 @@ PROGRAMS=       GetVideoFrames                    \
                 SimplePlayer_filter               \
                 SimplePlayer_multithread          \
                 Filter_test                       \
+                Video_Filter_test                 \
 
-OBJS=$(addsuffix .o,$(PROGRAMS))
+OBJS = $(addsuffix .o,$(PROGRAMS))
 # implicit add LDLIBS and the objs with the same prefix name as the target
 # implicit compile target with CFLAGS
 
@@ -49,6 +50,7 @@ MultiThread_display_in_main:     $(CUSTOM_OBJS)
 MultiThread_display_in_thread:   $(CUSTOM_OBJS)
 AVTimestamps:                    $(CUSTOM_OBJS)
 Filter_test:                     $(CUSTOM_OBJS) $(FILTER_OBJ)
+Video_Filter_test:               $(CUSTOM_OBJS) $(FILTER_OBJ)
 
 .phony: all clean
 
