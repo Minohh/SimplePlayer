@@ -30,10 +30,6 @@ LDLIBS := $(shell \
               export PKG_CONFIG_PATH=$(HOME)/ffmpeg_build/lib/pkgconfig; \
 			  pkg-config --libs $(FFMPEG_LIBS) $(SDL_LIBS))
 
-#LDLIBS += -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread        \
-       -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lenca -lfribidi -lexpat -lfreetype -lz -lpng12 \
-       -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm   \
-       -lva-x11 -lvdpau -lm -pthread
 LDLIBS += -lXdmcp -lxcb-shm -lxcb -lXau -lxcb-xfixes -lxcb-render -lxcb-shape -lasound -ldl -lpthread        \
        -lrt -lSDL2 -lXv -lX11 -lXext -lva -lass -lfontconfig -lfribidi -lexpat -lfreetype -lz                \
        -lfdk-aac -lmp3lame -lopus -logg -lvorbisenc -lvorbis -lx264 -lx265 -lstdc++ -lgcc_s -lgcc -lva-drm   \

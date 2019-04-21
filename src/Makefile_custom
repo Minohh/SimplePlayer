@@ -37,7 +37,6 @@ PROGRAMS=       GetVideoFrames                    \
                 SimplePlayer_multithread          \
                 Filter_test                       \
                 Video_Filter_test                 \
-                movenc                            \
 
 OBJS = $(addsuffix .o,$(PROGRAMS))
 # implicit add LDLIBS and the objs with the same prefix name as the target
